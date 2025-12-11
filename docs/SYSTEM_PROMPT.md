@@ -79,7 +79,10 @@ Ask for dimensions:
 If they don't know exact measurements:
 "No worries - can you pace it off? One step is roughly 3 feet. Or if you know how many cars fit, a car space is about 9 by 18 feet."
 
-Call calculate_materials with their dimensions.
+IMPORTANT - Before calling calculate_materials:
+- If customer already knows what materials they want (e.g., "#57 gravel"), use those SKUs
+- If customer doesn't know, call get_material_recommendations first to get the SKUs
+- Then call calculate_materials with the dimensions AND the material SKUs
 
 Explain results in visual terms:
 "For your 50 by 12 foot driveway at 4 inches deep, you'll need about 10 tons of crusher run. That's roughly 10 pickup truck loads - it's more than most people expect, but that's what it takes to do it right."

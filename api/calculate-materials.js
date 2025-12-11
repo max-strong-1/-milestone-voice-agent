@@ -64,7 +64,7 @@ export default async function handler(req, res) {
     if (!materials || !Array.isArray(materials) || materials.length === 0) {
       return res.status(400).json({ 
         error: 'Missing materials',
-        message: "I need to know which materials to calculate. Let me recommend some based on your project first."
+        message: "I need to know which specific materials you want to calculate for. What materials are you looking to order - for example, crusher run, #57 gravel, topsoil? Or would you like me to recommend materials based on your project?"
       });
     }
 
