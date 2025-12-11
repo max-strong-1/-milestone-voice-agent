@@ -87,30 +87,12 @@ export default async function handler(req, res) {
     const firstProduct = products[0];
     const yardLocation = getYardFromProduct(firstProduct);
 
-    // Format available products for response
-    const availableProducts = products.map(product => ({
-      product_id: product.id,
-      sku: product.sku,
-      name: getCleanProductName(product.name),
-      full_name: product.name,
-      price_per_ton: parseFloat(product.price),
-      max_load_tons: getTruckCapacity(product),
-      minimum_tons: getMinimumOrder(product),
-      density: getProductDensity(product),
-      in_stock: product.stock_status === 'instock',
-      description: product.short_description || ''
-    }));
-
-    // Count unique material types
-    const uniqueMaterials = new Set(availableProducts.map(p => p.name)).size;
-
     return res.status(200).json({
       serviceable: true,
       zip_code: cleanZip,
       zone_name: yardLocation,
       yard_location: yardLocation,
-      available_products: availableProducts,
-      message: `Great news! We service your area from our ${yardLocation} location. We have ${uniqueMaterials} different materials available for delivery. What kind of project are you working on?`
+      message: `Great news! We service your area from our ${yardLocation} location. What kind of project are you working on?`
     });
 
   } catch (error) {
