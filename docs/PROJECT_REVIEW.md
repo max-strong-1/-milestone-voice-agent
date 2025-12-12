@@ -139,10 +139,10 @@ The refactored system prompt removed important pronunciation and unit guidelines
 ## 🟡 Medium Priority Improvements
 
 ### Issue 4: No Health Check Endpoint
-**Status:** ⬜ Not Started  
+**Status:** ✅ Completed  
 **Priority:** Medium  
 **Effort:** 30 minutes  
-**File:** `api/health.js` (new)
+**File:** `api/health.js`
 
 **Problem:**  
 No way to monitor if the API and WooCommerce connection are healthy.
