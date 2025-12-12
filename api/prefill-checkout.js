@@ -1,14 +1,18 @@
 /**
  * Prefill Checkout API
- * Prepares checkout with customer information collected during conversation
- * Returns checkout URL for the voice agent to direct the customer
+ * Updates the pending WooCommerce order with customer information
+ * Returns checkout URL for the customer to complete payment
  */
+
+import { getWooCommerceClient } from '../lib/woocommerce.js';
+import { logApiRequest, startTimer } from '../lib/logger.js';
 
 /**
  * POST /api/prefill-checkout
  * 
  * Body: {
- *   cart_id: string (required)
+ *   order_id: number (required) - from add-to-cart response
+ *   order_key: string (optional) - for checkout URL
  *   customer_name: string (required)
  *   delivery_address: string (required)
  *   city: string (required)
@@ -22,6 +26,7 @@
  * }
  */
 export default async function handler(req, res) {
+  const getElapsed = startTimer();
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -37,7 +42,9 @@ export default async function handler(req, res) {
 
   try {
     const {
-      cart_id,
+      order_id,
+      order_key,
+      cart_id,  // Legacy support
       customer_name,
       delivery_address,
       city,
@@ -50,11 +57,11 @@ export default async function handler(req, res) {
       delivery_date
     } = req.body;
 
-    // Validate required fields
-    if (!cart_id) {
+    // Validate required fields - need order_id from add-to-cart
+    if (!order_id && !cart_id) {
       return res.status(400).json({ 
-        error: 'Missing cart_id',
-        message: "I don't have your cart information. Let me add your items to the cart first."
+        error: 'Missing order_id',
+        message: "I don't have your order information. Let me add your items to the cart first."
       });
     }
 
@@ -73,31 +80,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // Build checkout URL
-    // WooCommerce checkout page (from screenshots: ID 10)
-    const baseUrl = process.env.WOOCOMMERCE_URL || 'https://milestonetrucks.com';
-    let checkoutUrl = `${baseUrl}/checkout/`;
-
-    // ============================================
-    // CHECKOUT PREFILL OPTIONS
-    // ============================================
-    // 
-    // Option 1: URL Parameters (limited support in WooCommerce)
-    // WooCommerce doesn't natively support prefilling checkout via URL params
-    //
-    // Option 2: Create pending order with customer data
-    // Use WooCommerce REST API to create order with billing/shipping info
-    //
-    // Option 3: Custom WordPress solution
-    // Create a custom endpoint that sets session data for checkout
-    //
-    // Option 4: Use a plugin like "Checkout Field Editor"
-    // Some plugins support URL-based prefilling
-    //
-    // For now, we prepare the data and provide the checkout URL
-    // The customer will need to enter details at checkout
-    // ============================================
-
     // Parse customer name into first/last
     const nameParts = customer_name.trim().split(' ');
     const firstName = nameParts[0] || '';
@@ -106,52 +88,77 @@ export default async function handler(req, res) {
     // Clean phone number
     const cleanPhone = phone.replace(/[^0-9]/g, '');
 
-    // Prepare customer data for checkout
-    const customerData = {
-      billing: {
-        first_name: firstName,
-        last_name: lastName,
-        company: company || '',
-        address_1: delivery_address || '',
-        city: city || '',
-        state: state || 'OH',
-        postcode: zip_code || '',
-        phone: cleanPhone,
-        email: email || ''
-      },
-      shipping: {
-        first_name: firstName,
-        last_name: lastName,
-        company: company || '',
-        address_1: delivery_address || '',
-        city: city || '',
-        state: state || 'OH',
-        postcode: zip_code || ''
-      },
-      customer_note: delivery_notes || ''
-    };
-
-    // If delivery date requested, add to notes
+    // Build customer note with delivery info
+    let customerNote = '';
     if (delivery_date) {
-      customerData.customer_note = `Requested delivery date: ${delivery_date}. ${customerData.customer_note}`;
+      customerNote += `Requested delivery date: ${delivery_date}. `;
+    }
+    if (delivery_notes) {
+      customerNote += delivery_notes;
+    }
+
+    // ============================================
+    // UPDATE WOOCOMMERCE ORDER WITH CUSTOMER DATA
+    // ============================================
+    const wc = getWooCommerceClient();
+    const baseUrl = process.env.WOOCOMMERCE_URL || 'https://milestonetrucks.com';
+    let checkoutUrl = `${baseUrl}/checkout/`;
+    let updatedOrderKey = order_key;
+
+    if (order_id) {
+      try {
+        const updateData = {
+          billing: {
+            first_name: firstName,
+            last_name: lastName,
+            company: company || '',
+            address_1: delivery_address || '',
+            city: city || '',
+            state: state || 'OH',
+            postcode: zip_code || '',
+            phone: cleanPhone,
+            email: email || ''
+          },
+          shipping: {
+            first_name: firstName,
+            last_name: lastName,
+            company: company || '',
+            address_1: delivery_address || '',
+            city: city || '',
+            state: state || 'OH',
+            postcode: zip_code || ''
+          },
+          customer_note: customerNote
+        };
+
+        const orderResponse = await wc.put(`orders/${order_id}`, updateData);
+        updatedOrderKey = orderResponse.data.order_key;
+        
+        // Build checkout URL for this specific order
+        checkoutUrl = `${baseUrl}/checkout/order-pay/${order_id}/?pay_for_order=true&key=${updatedOrderKey}`;
+        
+        console.log(`Updated order ${order_id} with customer info`);
+      } catch (updateError) {
+        console.error('Error updating WooCommerce order:', updateError.message);
+        // Continue with generic checkout URL
+      }
     }
 
     // Build response
     const response = {
       checkout_url: checkoutUrl,
-      cart_id: cart_id,
-      customer_data: customerData,
-      prefilled_fields: [
-        'first_name',
-        'last_name',
-        'phone',
-        delivery_address ? 'address' : null,
-        city ? 'city' : null,
-        state ? 'state' : null,
-        zip_code ? 'postcode' : null,
-        email ? 'email' : null,
-        company ? 'company' : null
-      ].filter(Boolean),
+      order_id: order_id || null,
+      order_key: updatedOrderKey || null,
+      customer_data: {
+        first_name: firstName,
+        last_name: lastName,
+        phone: cleanPhone,
+        email: email || '',
+        address: delivery_address || '',
+        city: city || '',
+        state: state || 'OH',
+        zip_code: zip_code || ''
+      },
       delivery_date: delivery_date || null,
       delivery_notes: delivery_notes || null,
       ready_for_checkout: true
@@ -174,10 +181,22 @@ export default async function handler(req, res) {
 
     response.message = message;
 
+    logApiRequest('prefill-checkout', {
+      request: { order_id, customer_name, zip_code },  // Don't log full address
+      response,
+      status: 200,
+      duration_ms: getElapsed()
+    });
+
     return res.status(200).json(response);
 
   } catch (error) {
-    console.error('Error in prefill-checkout:', error);
+    logApiRequest('prefill-checkout', {
+      request: req.body,
+      status: 500,
+      duration_ms: getElapsed(),
+      error
+    });
     
     return res.status(500).json({
       error: 'Internal server error',

@@ -1,13 +1,14 @@
 /**
  * Add to Cart API
  * Adds calculated materials and delivery to cart
- * Prepares order data for checkout
+ * Creates a pending WooCommerce order for persistence
  * 
- * NOTE: WooCommerce REST API doesn't have direct cart manipulation
- * This creates a pending order or stores cart data for checkout
+ * The pending order ensures cart data survives if the conversation drops.
+ * Customer can resume checkout later via the order-pay URL.
  */
 
 import { getWooCommerceClient, getProductBySku } from '../lib/woocommerce.js';
+import { logApiRequest, startTimer } from '../lib/logger.js';
 
 /**
  * POST /api/add-to-cart
@@ -32,6 +33,8 @@ import { getWooCommerceClient, getProductBySku } from '../lib/woocommerce.js';
  * }
  */
 export default async function handler(req, res) {
+  const getElapsed = startTimer();
+  
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -160,28 +163,74 @@ export default async function handler(req, res) {
     const taxEstimate = subtotal * taxRate;
     const cartTotal = subtotal + taxEstimate;
 
-    // Generate cart ID
-    const cartId = `cart_${sessionId}_${Date.now()}`;
+    // ============================================
+    // CREATE PENDING WOOCOMMERCE ORDER
+    // ============================================
+    // This persists the cart as a pending order in WooCommerce.
+    // Benefits:
+    // - Cart survives if conversation drops
+    // - Customer can resume checkout via order-pay URL
+    // - Order appears in WooCommerce admin for tracking
+    // ============================================
 
-    // ============================================
-    // CART STORAGE OPTIONS
-    // ============================================
-    // In production, you would store this cart data:
-    // 
-    // Option 1: Vercel KV Store
-    // await kv.set(cartId, { items: processedItems, delivery, subtotal, ... }, { ex: 86400 });
-    //
-    // Option 2: Create draft WooCommerce order
-    // const order = await wc.post("orders", { status: 'pending', line_items: [...] });
-    //
-    // Option 3: Use WooCommerce Store API (requires CoCart or similar plugin)
-    // 
-    // For now, we return the cart data to be passed to checkout
-    // ============================================
+    // Build line items for WooCommerce order
+    const lineItems = [];
+    for (const item of processedItems) {
+      // Get product ID from SKU
+      const product = await getProductBySku(item.sku);
+      if (product) {
+        lineItems.push({
+          product_id: product.id,
+          quantity: item.quantity,
+          // WooCommerce will calculate price from product
+        });
+      }
+    }
+
+    // Create the pending order in WooCommerce
+    let orderId = null;
+    let orderKey = null;
+    let checkoutUrl = null;
+
+    try {
+      const orderData = {
+        status: 'pending',
+        line_items: lineItems,
+        meta_data: [
+          { key: '_voice_agent_session', value: sessionId },
+          { key: '_created_by', value: 'voice_agent_robert' },
+          { key: '_delivery_zip', value: delivery?.zip_code || customer_zip || '' }
+        ]
+      };
+
+      // Add shipping line if delivery fee exists
+      if (deliveryFee > 0) {
+        orderData.shipping_lines = [{
+          method_id: 'flat_rate',
+          method_title: 'Truck Delivery',
+          total: deliveryFee.toFixed(2)
+        }];
+      }
+
+      const orderResponse = await wc.post('orders', orderData);
+      orderId = orderResponse.data.id;
+      orderKey = orderResponse.data.order_key;
+      
+      // Build checkout URL - customer can complete payment here
+      const storeUrl = process.env.WOOCOMMERCE_URL || '';
+      checkoutUrl = `${storeUrl}/checkout/order-pay/${orderId}/?pay_for_order=true&key=${orderKey}`;
+      
+      console.log(`Created pending order ${orderId} for session ${sessionId}`);
+    } catch (orderError) {
+      console.error('Error creating WooCommerce order:', orderError.message);
+      // Continue without order - we'll still return cart data
+    }
 
     // Build response
     const response = {
-      cart_id: cartId,
+      order_id: orderId,
+      order_key: orderKey,
+      checkout_url: checkoutUrl,
       session_id: sessionId,
       items_added: processedItems.length,
       items: processedItems,
@@ -195,7 +244,7 @@ export default async function handler(req, res) {
       tax_estimate: parseFloat(taxEstimate.toFixed(2)),
       tax_note: "Tax calculated at checkout based on delivery address",
       cart_total: parseFloat(cartTotal.toFixed(2)),
-      checkout_ready: true
+      checkout_ready: orderId !== null
     };
 
     // Build message for voice agent
@@ -203,7 +252,7 @@ export default async function handler(req, res) {
       `${item.quantity} tons of ${item.product_name}`
     ).join(', ');
 
-    let message = `I've added ${itemDescriptions} to your cart.`;
+    let message = `I've added ${itemDescriptions} to your order.`;
     
     if (deliveryFee > 0) {
       message += ` With delivery, your subtotal is $${subtotal.toFixed(2)}.`;
@@ -212,14 +261,31 @@ export default async function handler(req, res) {
     }
     
     message += ` Including estimated tax, your total is about $${cartTotal.toFixed(2)}.`;
-    message += ` Would you like to proceed to checkout?`;
+    
+    if (orderId) {
+      message += ` Your order number is ${orderId}. Would you like to proceed to checkout?`;
+    } else {
+      message += ` Would you like to proceed to checkout?`;
+    }
 
     response.message = message;
+
+    logApiRequest('add-to-cart', {
+      request: req.body,
+      response,
+      status: 200,
+      duration_ms: getElapsed()
+    });
 
     return res.status(200).json(response);
 
   } catch (error) {
-    console.error('Error in add-to-cart:', error);
+    logApiRequest('add-to-cart', {
+      request: req.body,
+      status: 500,
+      duration_ms: getElapsed(),
+      error
+    });
     
     return res.status(500).json({
       error: 'Internal server error',
