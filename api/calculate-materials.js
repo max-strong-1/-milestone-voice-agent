@@ -108,6 +108,25 @@ export default async function handler(req, res) {
       });
     }
 
+    // Bounds validation - catch unreasonable values
+    const MAX_LENGTH_FT = 2000;
+    const MAX_WIDTH_FT = 2000;
+    const MAX_DEPTH_IN = 48;
+
+    if (length > MAX_LENGTH_FT || width > MAX_WIDTH_FT) {
+      return res.status(400).json({
+        error: 'Dimensions too large',
+        message: `Those dimensions seem unusually large. Most residential projects are under ${MAX_LENGTH_FT} feet. Are you measuring in feet?`
+      });
+    }
+
+    if (depth > MAX_DEPTH_IN) {
+      return res.status(400).json({
+        error: 'Depth too large',
+        message: `${depth} inches is over 4 feet deep - that's unusual for most projects. Did you mean ${depth} inches or something else?`
+      });
+    }
+
     const wc = getWooCommerceClient();
     const results = [];
     let subtotal = 0;

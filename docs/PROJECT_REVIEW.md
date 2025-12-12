@@ -180,7 +180,7 @@ export default async function handler(req, res) {
 ---
 
 ### Issue 5: No Input Bounds Validation
-**Status:** ⬜ Not Started  
+**Status:** ✅ Completed  
 **Priority:** Medium  
 **Effort:** 1 hour  
 **Files:** `api/calculate-materials.js`, `api/calculate-delivery.js`
@@ -212,7 +212,7 @@ if (length > MAX_DIMENSION_FT || width > MAX_DIMENSION_FT) {
 ---
 
 ### Issue 6: Environment Variable Validation
-**Status:** ⬜ Not Started  
+**Status:** ✅ Completed  
 **Priority:** Medium  
 **Effort:** 15 minutes  
 **File:** `lib/woocommerce.js`

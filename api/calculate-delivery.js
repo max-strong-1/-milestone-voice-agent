@@ -86,6 +86,15 @@ export default async function handler(req, res) {
       });
     }
 
+    // Bounds validation - catch unreasonable values
+    const MAX_WEIGHT_TONS = 500;
+    if (weight > MAX_WEIGHT_TONS) {
+      return res.status(400).json({
+        error: 'Weight too large',
+        message: `${weight} tons is a very large order - that's over 25 truckloads. Let me double-check those quantities with you.`
+      });
+    }
+
     // Calculate number of trucks needed
     // Max 18 tons per truck (based on product settings from screenshots)
     const truckCapacity = 18;
