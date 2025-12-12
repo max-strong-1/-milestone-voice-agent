@@ -11,12 +11,22 @@ import { getWooCommerceClient } from '../lib/woocommerce.js';
 /**
  * POST /api/calculate-delivery
  * 
- * Body: {
+ * Supports two formats:
+ * 
+ * NEW FORMAT (recommended):
+ * {
  *   zip_code: string (required)
- *   delivery_address: string (required)
+ *   delivery_address: string (optional)
  *   total_weight_tons: number (required)
  *   total_volume_cubic_yards: number (optional)
  *   yard_code: string (optional)
+ * }
+ * 
+ * LEGACY FORMAT (backward compatibility):
+ * {
+ *   zip_code: string (required)
+ *   cubic_yards: number (required) - will be converted to tons using default density
+ *   delivery_address: string (optional)
  * }
  */
 export default async function handler(req, res) {
@@ -39,6 +49,7 @@ export default async function handler(req, res) {
       delivery_address,
       total_weight_tons,
       total_volume_cubic_yards,
+      cubic_yards,  // Legacy parameter
       yard_code
     } = req.body;
 
@@ -50,15 +61,24 @@ export default async function handler(req, res) {
       });
     }
 
-    if (!total_weight_tons || total_weight_tons <= 0) {
+    // Handle legacy format (cubic_yards instead of total_weight_tons)
+    let weight = total_weight_tons;
+    
+    if (!weight && cubic_yards) {
+      // Convert cubic yards to tons using default density (1.4 tons/cubic yard for gravel)
+      const defaultDensity = 1.4;
+      weight = parseFloat(cubic_yards) * defaultDensity;
+    }
+
+    if (!weight || weight <= 0) {
       return res.status(400).json({ 
-        error: 'Missing total_weight_tons',
-        message: "I need to know the total weight to calculate delivery. Let me calculate your material quantities first."
+        error: 'Missing weight information',
+        message: "I need to know the total weight or volume to calculate delivery. Let me calculate your material quantities first."
       });
     }
 
     // Parse weight
-    const weight = parseFloat(total_weight_tons);
+    weight = parseFloat(weight);
     if (isNaN(weight) || weight <= 0) {
       return res.status(400).json({
         error: 'Invalid weight',

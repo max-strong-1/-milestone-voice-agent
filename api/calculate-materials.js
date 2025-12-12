@@ -22,13 +22,28 @@ import {
 /**
  * POST /api/calculate-materials
  * 
- * Body: {
+ * Supports two formats:
+ * 
+ * NEW FORMAT (recommended):
+ * {
  *   length_ft: number (required)
  *   width_ft: number (required)
  *   depth_inches: number (required)
  *   materials: array (required) - [{sku: string}, ...]
  *   zip_code: string (optional) - for verification
  * }
+ * 
+ * LEGACY FORMAT (backward compatibility):
+ * {
+ *   length_feet: number (required) - alternative to length_ft
+ *   width_feet: number (required) - alternative to width_ft
+ *   depth_inches: number (required)
+ *   materials: array (required) - [{sku: string}, ...]
+ *   zip_code: string (optional)
+ * }
+ * 
+ * NOTE: The 'materials' array is ALWAYS required. You must call get_material_recommendations
+ * first to obtain the SKUs, then pass them to this endpoint.
  */
 export default async function handler(req, res) {
   // CORS headers
@@ -46,15 +61,21 @@ export default async function handler(req, res) {
 
   try {
     const { 
-      length_ft, 
-      width_ft, 
+      length_ft,
+      length_feet,  // Legacy parameter
+      width_ft,
+      width_feet,   // Legacy parameter
       depth_inches, 
       materials,
       zip_code
     } = req.body;
 
+    // Handle legacy parameter names (length_feet/width_feet vs length_ft/width_ft)
+    const lengthValue = length_ft || length_feet;
+    const widthValue = width_ft || width_feet;
+
     // Validate required inputs
-    if (!length_ft || !width_ft || !depth_inches) {
+    if (!lengthValue || !widthValue || !depth_inches) {
       return res.status(400).json({ 
         error: 'Missing dimensions',
         message: "I need the dimensions to calculate materials. What's the length, width, and depth you're looking for?"
@@ -64,13 +85,13 @@ export default async function handler(req, res) {
     if (!materials || !Array.isArray(materials) || materials.length === 0) {
       return res.status(400).json({ 
         error: 'Missing materials',
-        message: "I need to know which specific materials you want to calculate for. What materials are you looking to order - for example, crusher run, #57 gravel, topsoil? Or would you like me to recommend materials based on your project?"
+        message: "I need to know which materials to calculate. Let me recommend some based on your project first."
       });
     }
 
     // Parse dimensions (handle strings like "50" or "50 feet")
-    const length = parseFloat(length_ft.toString().replace(/[^0-9.]/g, ''));
-    const width = parseFloat(width_ft.toString().replace(/[^0-9.]/g, ''));
+    const length = parseFloat(lengthValue.toString().replace(/[^0-9.]/g, ''));
+    const width = parseFloat(widthValue.toString().replace(/[^0-9.]/g, ''));
     const depth = parseFloat(depth_inches.toString().replace(/[^0-9.]/g, ''));
 
     if (isNaN(length) || isNaN(width) || isNaN(depth)) {

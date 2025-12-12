@@ -12,10 +12,22 @@ import { getWooCommerceClient, getProductBySku } from '../lib/woocommerce.js';
 /**
  * POST /api/add-to-cart
  * 
- * Body: {
+ * Supports two formats:
+ * 
+ * NEW FORMAT (recommended):
+ * {
  *   session_id: string (required) - unique identifier for this conversation
  *   items: array (required) - [{sku, product_name, quantity, unit, price_per_ton}, ...]
  *   delivery: object (optional) - {fee, trucks, zip_code, address}
+ *   customer_zip: string (optional)
+ * }
+ * 
+ * LEGACY FORMAT (backward compatibility):
+ * {
+ *   product_id: number (required) - WooCommerce product ID
+ *   quantity: number (required) - Quantity in tons
+ *   session_id: string (optional) - auto-generated if not provided
+ *   delivery: object (optional)
  *   customer_zip: string (optional)
  * }
  */
@@ -43,22 +55,49 @@ export default async function handler(req, res) {
       quantity
     } = req.body;
 
-    // Handle simple format (product_id + quantity) or complex format (items array)
+    // Handle legacy format (product_id + quantity) for backward compatibility
     let cartItems = items;
+    let sessionId = session_id;
     
     if (!cartItems && product_id && quantity) {
-      // Convert simple format to items array
-      cartItems = [{
-        product_id: product_id,
-        quantity: quantity
-      }];
+      // Convert legacy format to new format
+      // Generate session ID if not provided
+      sessionId = sessionId || `session_${Date.now()}`;
+      
+      // We need to fetch the product to get its SKU
+      const wc = getWooCommerceClient();
+      try {
+        const response = await wc.get(`products/${product_id}`);
+        const product = response.data;
+        
+        cartItems = [{
+          sku: product.sku,
+          product_name: product.name,
+          quantity: parseFloat(quantity),
+          price_per_ton: parseFloat(product.price || 0),
+          unit: 'tons'
+        }];
+      } catch (error) {
+        console.error(`Error fetching product ${product_id}:`, error.message);
+        return res.status(400).json({
+          error: 'Product not found',
+          message: "I couldn't find that product. Let me help you calculate what you need first."
+        });
+      }
     }
 
     // Validate required fields
+    if (!sessionId) {
+      return res.status(400).json({ 
+        error: 'Missing session_id',
+        message: "There was a technical issue. Let me start over - what materials did you want to order?"
+      });
+    }
+
     if (!cartItems || !Array.isArray(cartItems) || cartItems.length === 0) {
       return res.status(400).json({ 
         error: 'No items provided',
-        message: "I don't have any items to add to your cart. What materials do you want to order?"
+        message: "I don't have any items to add to your cart. Let me help you calculate what you need first."
       });
     }
 
@@ -68,36 +107,39 @@ export default async function handler(req, res) {
     const wc = getWooCommerceClient();
 
     for (const item of cartItems) {
-      // Skip if missing required fields
-      if ((!item.sku && !item.product_id) || !item.quantity) continue;
+      if (!item.sku || !item.quantity) continue;
 
       const quantity = parseFloat(item.quantity);
+      let pricePerTon = parseFloat(item.price_per_ton || 0);
+      let productName = item.product_name || '';
       
-      // If we have product_id but no price, fetch from WooCommerce
-      let pricePerTon = parseFloat(item.price_per_ton || item.price || 0);
-      let productName = item.product_name || item.name || '';
-      let sku = item.sku || '';
-      
-      if (item.product_id && (!pricePerTon || !productName)) {
+      // If price is missing or zero, fetch from WooCommerce
+      if (!pricePerTon || pricePerTon <= 0) {
         try {
-          const response = await wc.get(`products/${item.product_id}`);
-          const product = response.data;
-          pricePerTon = parseFloat(product.price || 0);
-          productName = product.name;
-          sku = product.sku;
+          const product = await getProductBySku(item.sku);
+          if (product) {
+            pricePerTon = parseFloat(product.price || 0);
+            productName = productName || product.name;
+          }
         } catch (error) {
-          console.error(`Error fetching product ${item.product_id}:`, error.message);
-          continue;
+          console.error(`Error fetching price for SKU ${item.sku}:`, error.message);
         }
+      }
+      
+      // Validate that we have a valid price
+      if (!pricePerTon || pricePerTon <= 0) {
+        return res.status(400).json({
+          error: 'Invalid pricing',
+          message: `I couldn't find pricing for ${item.sku}. Let me recalculate your materials and try again.`
+        });
       }
       
       const itemTotal = quantity * pricePerTon;
       subtotal += itemTotal;
       
       processedItems.push({
-        product_id: item.product_id || null,
-        sku: sku,
-        product_name: productName,
+        sku: item.sku,
+        product_name: productName || item.sku,
         quantity: quantity,
         unit: item.unit || 'tons',
         price_per_unit: pricePerTon,
@@ -119,7 +161,7 @@ export default async function handler(req, res) {
     const cartTotal = subtotal + taxEstimate;
 
     // Generate cart ID
-    const cartId = `cart_${session_id || 'guest'}_${Date.now()}`;
+    const cartId = `cart_${sessionId}_${Date.now()}`;
 
     // ============================================
     // CART STORAGE OPTIONS
@@ -140,7 +182,7 @@ export default async function handler(req, res) {
     // Build response
     const response = {
       cart_id: cartId,
-      session_id: session_id,
+      session_id: sessionId,
       items_added: processedItems.length,
       items: processedItems,
       delivery: delivery ? {
