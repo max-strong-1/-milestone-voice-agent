@@ -19,6 +19,8 @@ import {
   explainQuantity
 } from '../lib/calculations.js';
 
+import { logApiRequest, startTimer } from '../lib/logger.js';
+
 /**
  * POST /api/calculate-materials
  * 
@@ -46,6 +48,8 @@ import {
  * first to obtain the SKUs, then pass them to this endpoint.
  */
 export default async function handler(req, res) {
+  const getElapsed = startTimer();
+  
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -198,7 +202,7 @@ export default async function handler(req, res) {
 
     const squareFeet = length * width;
     
-    return res.status(200).json({
+    const response = {
       dimensions: {
         length_ft: length,
         width_ft: width,
@@ -212,10 +216,24 @@ export default async function handler(req, res) {
         total_truck_loads: Math.ceil(totalTons / 18)
       },
       message: `For your ${length} by ${width} foot area (${squareFeet} square feet) at ${depth} inches deep, here's what you'll need: ${results.map(r => `${r.quantity_tons} tons of ${r.product_name}`).join(', ')}. Your material total is ${formatCurrency(subtotal)}.`
+    };
+
+    logApiRequest('calculate-materials', {
+      request: req.body,
+      response,
+      status: 200,
+      duration_ms: getElapsed()
     });
 
+    return res.status(200).json(response);
+
   } catch (error) {
-    console.error('Error in calculate-materials:', error);
+    logApiRequest('calculate-materials', {
+      request: req.body,
+      status: 500,
+      duration_ms: getElapsed(),
+      error
+    });
     
     return res.status(500).json({
       error: 'Internal server error',

@@ -15,6 +15,8 @@ import {
   getYardFromProduct 
 } from '../lib/woocommerce.js';
 
+import { logApiRequest, startTimer } from '../lib/logger.js';
+
 /**
  * POST /api/check-service-area
  * 
@@ -29,6 +31,7 @@ import {
  * - message: string (for Robert to speak)
  */
 export default async function handler(req, res) {
+  const getElapsed = startTimer();
   // CORS headers for ElevenLabs webhook
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -104,17 +107,31 @@ export default async function handler(req, res) {
     // Count unique material types
     const uniqueMaterials = new Set(availableProducts.map(p => p.name)).size;
 
-    return res.status(200).json({
+    const response = {
       serviceable: true,
       zip_code: cleanZip,
       zone_name: yardLocation,
       yard_location: yardLocation,
       available_products: availableProducts,
       message: `Great news! We service your area from our ${yardLocation} location. We have ${uniqueMaterials} different materials available for delivery. What kind of project are you working on?`
+    };
+
+    logApiRequest('check-service-area', {
+      request: req.body,
+      response,
+      status: 200,
+      duration_ms: getElapsed()
     });
 
+    return res.status(200).json(response);
+
   } catch (error) {
-    console.error('Error in check-service-area:', error);
+    logApiRequest('check-service-area', {
+      request: req.body,
+      status: 500,
+      duration_ms: getElapsed(),
+      error
+    });
     
     return res.status(500).json({
       error: 'Internal server error',
